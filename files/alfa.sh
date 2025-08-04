@@ -1,10 +1,10 @@
 #!/bin/sh
 
 #================================================================
-# LuCI Commander Installer Script (v42 - Final)
+# LuCI Commander Installer Script (v45 - Final)
 #================================================================
-# This version adds a "Clear History" button to the Script History
-# section, allowing users to easily delete their command history.
+# This version updates the styling of the tab buttons to match
+# the "Analyze" and "Start Installation" buttons for a unified UI.
 #================================================================
 
 # --- Cleanup ---
@@ -130,7 +130,7 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
 
 <style>
     :root {
-        --peditx-primary: #00b5e2;
+        --peditx-primary: #ffc107; /* New vibrant yellow/orange */
         --peditx-dark-bg: #2d2d2d;
         --peditx-card-bg: #3a3a3a;
         --peditx-border: #444;
@@ -139,28 +139,33 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
     }
     .peditx-tabs {
         display: flex;
-        border-bottom: 1px solid var(--peditx-border);
+        gap: 10px;
         margin-bottom: 20px;
         flex-wrap: wrap;
     }
     .peditx-tab-link {
-        background-color: transparent;
+        background-color: #555; /* New dark background for inactive tabs */
+        color: #d4d4d4;
         border: none;
-        border-bottom: 3px solid transparent;
+        border-radius: 50px; /* Rounded corners for buttons */
         outline: none;
         cursor: pointer;
-        padding: 14px 16px;
-        transition: color 0.3s, border-color 0.3s;
+        padding: 10px 20px;
         font-size: 16px;
-        font-weight: 500;
-        color: #aaa;
-        margin-bottom: -1px;
+        font-weight: bold;
+        transition: background-color 0.3s, color 0.3s, box-shadow 0.3s;
+        box-shadow: none; /* Inactive tabs have no shadow */
     }
-    .peditx-tab-link:hover { color: var(--peditx-text-color); }
+    .peditx-tab-link:hover {
+        background: linear-gradient(135deg, #ffae42, #ff8c00);
+        color: #1a1a1a;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
     .peditx-tab-link.active {
-        color: var(--peditx-primary);
-        border-bottom: 3px solid var(--peditx-primary);
-        font-weight: 700;
+        background: linear-gradient(135deg, #ffae42, #ff8c00);
+        color: #1a1a1a; /* Dark text for active tab for contrast */
+        font-weight: bold;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }
     .peditx-tab-content { display: none; }
     .cbi-input-text {
@@ -293,9 +298,11 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
         tabcontent = document.getElementsByClassName("peditx-tab-content");
         for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = "none"; }
         tablinks = document.getElementsByClassName("peditx-tab-link");
-        for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(" active", ""); }
+        for (i = 0; i < tablinks.length; i++) {
+            tablinks[i].classList.remove("active");
+        }
         document.getElementById(tabName).style.display = "block";
-        evt.currentTarget.className += " active";
+        evt.currentTarget.classList.add("active");
 
         if (tabName === 'custom-installer' && !interactiveTerminalInitialized) {
             initInteractiveInstaller();

@@ -1,10 +1,10 @@
 #!/bin/sh
 
 #================================================================
-# LuCI Commander Installer Script (v45 - Final)
+# LuCI Commander Installer Script (v38 - History Clear & Format)
 #================================================================
-# This version updates the styling of the tab buttons to match
-# the "Analyze" and "Start Installation" buttons for a unified UI.
+# This version adds a clear button and improved formatting to the
+# command history feature.
 #================================================================
 
 # --- Cleanup ---
@@ -12,6 +12,7 @@ echo ">>> Cleaning up old versions..."
 rm -f /usr/lib/lua/luci/controller/commander.lua
 rm -f /usr/lib/lua/luci/view/commander.htm
 rm -f /usr/bin/commander_runner.sh
+rm -f /etc/config/commander_history.log
 if [ -f /etc/init.d/luci_commander_ttyd ]; then
     /etc/init.d/luci_commander_ttyd stop >/dev/null 2>&1
     /etc/init.d/luci_commander_ttyd disable >/dev/null 2>&1
@@ -32,24 +33,64 @@ fi
 echo ">>> Creating LuCI application files..."
 mkdir -p /usr/lib/lua/luci/controller /usr/lib/lua/luci/view
 
-# Create LuCI Controller
+# Create LuCI Controller (with History Clear API)
 cat > /usr/lib/lua/luci/controller/commander.lua <<'EoL'
 module("luci.controller.commander", package.seeall)
 
 function index()
-    -- This logic creates the parent menu if it doesn't exist,
-    -- exactly like the user's successful sshplus script.
     entry({"admin", "peditxos"}, firstchild(), "PeDitXOS Tools", 50).dependent=true
-    
-    -- Adding the child menu item for the Commander
     entry({"admin", "peditxos", "commander"}, template("commander"), "Commander", 30).dependent = true
     
-    -- API endpoints for the Smart Installer
     entry({"admin", "peditxos", "commander_analyze"}, call("analyze_script")).json = true
     entry({"admin", "peditxos", "commander_run"}, call("run_script")).json = true
     entry({"admin", "peditxos", "commander_log"}, call("get_log")).json = true
-    entry({"admin", "peditxos", "commander_history"}, call("get_history")).json = true
-    entry({"admin", "peditxos", "commander_clear_history"}, call("clear_history")).json = true
+    entry({"admin", "peditxos", "commander_history"}, call("handle_history")).json = true
+end
+
+function handle_history()
+    local history_file = "/etc/config/commander_history.log"
+    if luci.http.formvalue("action") == "clear" then
+        -- Clear history
+        local f = io.open(history_file, "w")
+        if f then f:close() end
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({success = true})
+    elseif luci.http.formvalue("url") then
+        -- Write to history
+        local url_to_add = luci.http.formvalue("url")
+        local f_read = io.open(history_file, "r")
+        local exists = false
+        if f_read then
+            for line in f_read:lines() do
+                if line == url_to_add then
+                    exists = true
+                    break
+                end
+            end
+            f_read:close()
+        end
+        if not exists then
+            local f_append = io.open(history_file, "a")
+            if f_append then
+                f_append:write(url_to_add .. "\n")
+                f_append:close()
+            end
+        end
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({success = true})
+    else
+        -- Read history
+        local history = {}
+        local f = io.open(history_file, "r")
+        if f then
+            for line in f:lines() do
+                table.insert(history, line)
+            end
+            f:close()
+        end
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({history = history})
+    end
 end
 
 function analyze_script()
@@ -59,7 +100,6 @@ function analyze_script()
         luci.http.write_json({success = false, error = "URL cannot be empty"})
         return
     end
-    
     local result = luci.sys.exec("/usr/bin/commander_runner.sh analyze \"" .. url .. "\"")
     luci.http.prepare_content("application/json")
     luci.http.write(result)
@@ -77,60 +117,27 @@ function get_log()
     luci.http.write_json({ log = content })
 end
 
-function get_history()
-    local history_file = "/etc/luci-commander-history.json"
-    local history = {}
-    local file = io.open(history_file, "r")
-    if file then
-        for line in file:lines() do
-            local status, result = pcall(luci.json.decode, line)
-            if status then
-                table.insert(history, result)
-            end
-        end
-        file:close()
-    end
-    luci.http.prepare_content("application/json")
-    luci.http.write_json({ history = history })
-end
-
-function clear_history()
-    local history_file = "/etc/luci-commander-history.json"
-    luci.sys.exec("rm -f " .. history_file)
-    luci.http.prepare_content("application/json")
-    luci.http.write_json({ success = true })
-end
-
 function run_script()
     local url = luci.http.formvalue("url")
     local params = luci.http.formvalue("params")
-    
     if not url or url == "" then
         luci.http.prepare_content("application/json")
         luci.http.write_json({success = false, error = "URL is missing"})
         return
     end
-    
-    -- Write to history file before execution
-    local history_file = "/etc/luci-commander-history.json"
-    local history_entry = { url = url, params = params }
-    local history_json = luci.json.encode(history_entry)
-    luci.sys.exec("echo '" .. history_json .. "' >> " .. history_file)
-    
     luci.sys.exec("nohup /usr/bin/commander_runner.sh execute \"" .. url .. "\" '" .. params .. "' >/dev/null 2>&1 &")
-    
     luci.http.prepare_content("application/json")
     luci.http.write_json({success = true})
 end
 EoL
 
-# Create LuCI View (Tabbed UI)
+# Create LuCI View (with new styles and history section)
 cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
 <%+header%>
 
 <style>
     :root {
-        --peditx-primary: #ffc107; /* New vibrant yellow/orange */
+        --peditx-primary: #00b5e2;
         --peditx-dark-bg: #2d2d2d;
         --peditx-card-bg: #3a3a3a;
         --peditx-border: #444;
@@ -144,28 +151,17 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
         flex-wrap: wrap;
     }
     .peditx-tab-link {
-        background-color: #555; /* New dark background for inactive tabs */
-        color: #d4d4d4;
-        border: none;
-        border-radius: 50px; /* Rounded corners for buttons */
-        outline: none;
+        font-size: 16px; padding: 10px 25px; color: #1a1a1a; font-weight: bold;
+        background: #555;
+        border: none; border-radius: 50px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         cursor: pointer;
-        padding: 10px 20px;
-        font-size: 16px;
-        font-weight: bold;
-        transition: background-color 0.3s, color 0.3s, box-shadow 0.3s;
-        box-shadow: none; /* Inactive tabs have no shadow */
-    }
-    .peditx-tab-link:hover {
-        background: linear-gradient(135deg, #ffae42, #ff8c00);
-        color: #1a1a1a;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        transition: background 0.3s ease, transform 0.2s ease;
+        color: #ddd;
     }
     .peditx-tab-link.active {
         background: linear-gradient(135deg, #ffae42, #ff8c00);
-        color: #1a1a1a; /* Dark text for active tab for contrast */
-        font-weight: bold;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        color: #1a1a1a;
+        transform: translateY(-2px);
     }
     .peditx-tab-content { display: none; }
     .cbi-input-text {
@@ -191,31 +187,32 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
         border: 1px solid var(--peditx-border); margin-top: 20px;
     }
     #interactive_terminal { padding: 0; }
-    .history-item {
-        background-color: var(--peditx-card-bg);
+    #history-container {
+        margin-top: 20px;
+        padding: 15px;
+        background: var(--peditx-card-bg);
         border: 1px solid var(--peditx-border);
         border-radius: 8px;
-        padding: 10px;
-        margin-bottom: 10px;
+    }
+    #history-list {
+        list-style: none; padding: 0; margin: 0; max-height: 150px; overflow-y: auto;
+    }
+    .history-item {
+        padding: 8px;
         cursor: pointer;
+        border-bottom: 1px solid var(--peditx-border);
         transition: background-color 0.2s;
-        word-wrap: break-word;
+        word-break: break-all;
     }
-    .history-item:hover {
-        background-color: var(--peditx-hover-bg);
+    .history-item:last-child { border-bottom: none; }
+    .history-item:hover { background-color: var(--peditx-hover-bg); }
+    .clear-button {
+        background: linear-gradient(135deg, #ff6b6b, #ff4d4d);
+        font-size: 12px;
+        padding: 5px 15px;
     }
-    .clear-history-button {
-        font-size: 14px;
-        padding: 8px 15px;
-        color: #fff;
-        font-weight: bold;
-        background: linear-gradient(135deg, #ff4c4c, #cc0000);
-        border: none;
-        border-radius: 50px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        cursor: pointer;
-        margin-top: 10px;
-        float: right;
+    .clear-button:hover {
+        background: linear-gradient(135deg, #ff4d4d, #e03e3e);
     }
 </style>
 
@@ -230,9 +227,6 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
     <!-- Tab 1: Smart Installer -->
     <div id="smart-installer" class="peditx-tab-content" style="display:block;">
         <div class="cbi-section">
-            <div class="cbi-section-descr">
-                <p><%:Enter an installer command. The system will try to analyze it and create a form for any required inputs.%></p>
-            </div>
             <div class="cbi-value">
                 <label class="cbi-value-title" for="script_url"><%:Installer Command%></label>
                 <div class="cbi-value-field" style="gap: 10px;">
@@ -246,28 +240,18 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
             <button id="execute_button" class="peditx-button"><%:Start Installation%></button>
         </div>
         <pre id="log-output" class="log-container">Welcome! Enter an installer command and click Analyze.</pre>
-
-        <!-- Script History Section -->
-        <div class="cbi-section">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h3><a name="history"><%:Script History%></a></h3>
-                <button class="clear-history-button" onclick="clearHistory()"><%:Clear History%></button>
+        <div id="history-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4>History</h4>
+                <button id="clear_history_button" class="peditx-button clear-button">Clear</button>
             </div>
-            <div class="cbi-section-descr">
-                <p><%:Click on a past command to load it into the input field above.%></p>
-            </div>
-            <div id="history-list-container">
-                <div>Loading history...</div>
-            </div>
+            <ul id="history-list"></ul>
         </div>
     </div>
 
     <!-- Tab 2: Custom/Interactive Installer -->
     <div id="custom-installer" class="peditx-tab-content">
         <div class="cbi-section">
-            <div class="cbi-section-descr">
-                <p><%:Enter a command to run in the live terminal. You can answer questions (e.g., from whiptail/dialog) directly in the terminal window.%></p>
-            </div>
             <div class="cbi-value">
                 <label class="cbi-value-title" for="interactive_command_input"><%:Command%></label>
                 <div class="cbi-value-field" style="gap: 10px;">
@@ -288,21 +272,14 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
     var monitorInterval;
     var interactiveTerminalInitialized = false;
 
-    // Load history on initial page load
-    window.onload = function() {
-        loadHistory();
-    };
-
     function showTab(evt, tabName) {
         var i, tabcontent, tablinks;
         tabcontent = document.getElementsByClassName("peditx-tab-content");
         for (i = 0; i < tabcontent.length; i++) { tabcontent[i].style.display = "none"; }
         tablinks = document.getElementsByClassName("peditx-tab-link");
-        for (i = 0; i < tablinks.length; i++) {
-            tablinks[i].classList.remove("active");
-        }
+        for (i = 0; i < tablinks.length; i++) { tablinks[i].className = tablinks[i].className.replace(" active", ""); }
         document.getElementById(tabName).style.display = "block";
-        evt.currentTarget.classList.add("active");
+        evt.currentTarget.className += " active";
 
         if (tabName === 'custom-installer' && !interactiveTerminalInitialized) {
             initInteractiveInstaller();
@@ -358,38 +335,37 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
     }
 
     function loadHistory() {
-        var container = document.getElementById('history-list-container');
-        container.innerHTML = '<div>Loading history...</div>';
         XHR.get('<%=luci.dispatcher.build_url("admin/peditxos/commander_history")%>', null, function(x, data) {
-            if (x && x.status === 200 && data.history !== undefined) {
-                container.innerHTML = '';
-                if (data.history.length > 0) {
-                    data.history.reverse().forEach(function(item) {
-                        var div = document.createElement('div');
-                        div.className = 'history-item';
-                        div.textContent = item.url;
-                        div.onclick = function() {
-                            document.getElementById('script_url').value = item.url;
-                        };
-                        container.appendChild(div);
-                    });
+            if (x && x.status === 200 && data.history) {
+                var historyList = document.getElementById('history-list');
+                historyList.innerHTML = '';
+                if (data.history.length === 0) {
+                    historyList.innerHTML = '<li class="history-item" style="cursor:default; color:#888;">No history yet.</li>';
                 } else {
-                    container.innerHTML = '<div>No past commands found.</div>';
+                    data.history.reverse().forEach(function(cmd) {
+                        var li = document.createElement('li');
+                        li.className = 'history-item';
+                        
+                        var filename = "Script";
+                        var match = cmd.match(/([^/]+\.sh)/);
+                        if (match && match[1]) {
+                            filename = match[1];
+                        }
+                        
+                        li.innerHTML = `<strong style="color: var(--peditx-primary);">${filename}:</strong> ${cmd}`;
+                        li.onclick = function() {
+                            document.getElementById('script_url').value = cmd;
+                        };
+                        historyList.appendChild(li);
+                    });
                 }
-            } else {
-                container.innerHTML = '<div>Error loading history.</div>';
             }
         });
     }
-    
+
     function clearHistory() {
-        XHR.get('<%=luci.dispatcher.build_url("admin/peditxos/commander_clear_history")%>', null, function(x, data) {
-            if (x && x.status === 200 && data.success) {
-                loadHistory(); // Reload the history list after clearing
-                document.getElementById('log-output').textContent = 'History has been cleared.';
-            } else {
-                document.getElementById('log-output').textContent = 'Error: Could not clear history.';
-            }
+        XHR.get('<%=luci.dispatcher.build_url("admin/peditxos/commander_history")%>', { action: 'clear' }, function() {
+            loadHistory();
         });
     }
 
@@ -435,6 +411,9 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
         document.getElementById('log-output').textContent = 'Starting installation...\n\n';
         XHR.get('<%=luci.dispatcher.build_url("admin/peditxos/commander_run")%>', { url: url, params: JSON.stringify(params) }, function(x, data) {
             if (x && x.status === 200 && data.success) {
+                XHR.get('<%=luci.dispatcher.build_url("admin/peditxos/commander_history")%>', { url: url }, function() {
+                    loadHistory();
+                });
                 monitorInterval = setInterval(pollLog, 2000);
             } else {
                 button.disabled = false;
@@ -443,6 +422,9 @@ cat > /usr/lib/lua/luci/view/commander.htm <<'EoL'
             }
         });
     });
+
+    document.getElementById('clear_history_button').addEventListener('click', clearHistory);
+    loadHistory();
 </script>
 
 <%+footer%>
@@ -452,13 +434,6 @@ EoL
 echo ">>> Creating the smart runner script..."
 cat > /usr/bin/commander_runner.sh << 'EOF'
 #!/bin/sh
-#================================================================
-# LuCI Commander Runner (v42 - Final)
-#================================================================
-# This version uses the stable 'analyze' logic while maintaining
-# a secure 'execute' script, fixing the freezing issue.
-#================================================================
-
 ACTION="$1"
 URL_COMMAND="$2"
 PARAMS_JSON="$3"
@@ -466,40 +441,29 @@ LOG_FILE="/tmp/commander_log.txt"
 LOCK_FILE="/tmp/commander.lock"
 SCRIPT_FILE="/tmp/installer_script.sh"
 
-# Function to extract URL from the command string
 extract_url() {
     echo "$1" | grep -oE '(http|https)://[^ |"]+' | head -n 1
 }
 
-# Function to analyze the script
 analyze_script() {
     URL=$(extract_url "$URL_COMMAND")
     if [ -z "$URL" ]; then echo '{"success": false, "error": "Could not find a valid URL."}'; exit 1; fi
-    
-    # Use curl for better compatibility and error handling
     curl -sSL --fail "$URL" -o "$SCRIPT_FILE"
     if [ $? -ne 0 ]; then echo '{"success": false, "error": "Failed to download script."}'; exit 1; fi
-
-    # Analyze for 'read VAR' patterns and prompts
     PARAMS=$(grep -E '^\s*read\s+.*[a-zA-Z0-9_]+' "$SCRIPT_FILE" | sed -E 's/^\s*read\s+(-p\s*"[^"]*"\s+)?([a-zA-Z0-9_]+).*$/\2/')
-    
     echo '{"success": true, "params": ['
     FIRST=true
     for VAR in $PARAMS; do
-        if [ "$FIRST" = "false" ]; then echo -n ","; fi
-        
-        # Try to find a prompt for the variable using various common patterns
+        if [ "$FIRST" = "false" ]; then echo ","; fi
         PROMPT=$(grep -B 1 "read.*${VAR}" "$SCRIPT_FILE" | head -n 1 | grep -oE 'echo\s*(-n\s*)?"[^"]*"' | sed -E 's/.*echo\s*(-n\s*)?"([^"]*)"/\2/')
         if [ -z "$PROMPT" ]; then PROMPT=$(grep "read.*-p" "$SCRIPT_FILE" | grep "$VAR" | sed -E 's/.*read.*-p\s*"([^"]*)".*/\1/'); fi
         if [ -z "$PROMPT" ]; then PROMPT="Enter value for ${VAR}:"; fi
-        
-        echo -n "{\"variable\": \"$VAR\", \"prompt\": \"$PROMPT\"}"
+        echo "{\"variable\": \"$VAR\", \"prompt\": \"$PROMPT\"}"
         FIRST=false
     done
     echo ']}'
 }
 
-# Function to execute the script
 execute_script() {
     if [ -f "$LOCK_FILE" ]; then
         echo ">>> Another script is running." > "$LOG_FILE"; echo ">>> SCRIPT FINISHED <<<" >> "$LOG_FILE"; exit 1;
@@ -507,16 +471,12 @@ execute_script() {
     touch "$LOCK_FILE"; trap 'rm -f "$LOCK_FILE"' EXIT
     (
         echo ">>> Starting script at $(date)"
-        # Simple JSON parsing without jq
         echo "$PARAMS_JSON" | sed 's/[{}" ]//g' | tr ',' '\n' | while IFS=: read -r key value; do
             export "$key"="$value"
         done
-        echo ">>> Executing script from: $URL_COMMAND"
+        echo ">>> Executing: $URL_COMMAND"
         echo "--------------------------------------"
-        
-        # Execute the pre-downloaded file instead of 'eval'
-        sh "$SCRIPT_FILE"
-        
+        eval "$URL_COMMAND"
         EXIT_CODE=$?
         echo "--------------------------------------"
         echo "Exit Code: $EXIT_CODE"
@@ -533,7 +493,6 @@ chmod +x /usr/bin/commander_runner.sh
 
 # --- Service Creation (for Interactive Installer) ---
 echo ">>> Creating the interactive session service..."
-# FIX: A fully compliant init.d script
 cat > /etc/init.d/luci_commander_ttyd <<'EoL'
 #!/bin/sh /etc/rc.common
 START=99
@@ -549,15 +508,15 @@ start_service() {
 }
 
 stop_service() {
-    : # This is a null command to make the function syntactically valid.
+    :
 }
 EoL
-# CRITICAL FIX: Add execute permissions to the init script
 chmod +x /etc/init.d/luci_commander_ttyd
 echo "Service script created and made executable."
 
 # --- Finalizing ---
 echo ">>> Finalizing installation..."
+touch /etc/config/commander_history.log
 /etc/init.d/luci_commander_ttyd enable
 /etc/init.d/luci_commander_ttyd restart
 rm -rf /tmp/luci-*
